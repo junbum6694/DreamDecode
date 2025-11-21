@@ -3,10 +3,10 @@ package est.DreamDecode.controller;
 
 import est.DreamDecode.dto.*;
 import est.DreamDecode.service.UserService;
+import est.DreamDecode.util.SecurityUtil;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
-import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -16,27 +16,14 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/api/users/me")
-@Tag(name = "프로필 관리 API", description = "사용자 프로필 조회, 수정, 비밀번호 변경 관련 API")
 public class UserProfileController {
 
     private final UserService userService;
 
-    private Long getUserId(Authentication authentication) {
-        if (authentication == null || authentication.getPrincipal() == null) {
-            throw new IllegalArgumentException("인증 정보가 없습니다.");
-        }
-        return (Long) authentication.getPrincipal(); // JwtTokenFilter 에서 넣어준 userId
-    }
-
     /** 내 정보 조회 */
-    @Operation(summary = "프로필 조회", description = "본인의 프로필 정보(이름, 이메일, 성별, 생년월일)를 조회합니다. 인증 필요.")
-    @ApiResponses(value = {
-            @ApiResponse(responseCode = "200", description = "조회 성공"),
-            @ApiResponse(responseCode = "401", description = "인증 필요")
-    })
     @GetMapping
     public ResponseEntity<UserProfileResponse> getMe(Authentication authentication) {
-        Long userId = getUserId(authentication);
+        Long userId = SecurityUtil.getUserId(authentication);
         return ResponseEntity.ok(userService.getUserProfileResponse(userId));
     }
 
@@ -52,7 +39,7 @@ public class UserProfileController {
             Authentication authentication,
             @RequestBody @Valid UpdateProfileRequest body
     ) {
-        Long userId = getUserId(authentication);
+        Long userId = SecurityUtil.getUserId(authentication);
         UserProfileResponse updated = userService.updateProfile(userId, body);
         return ResponseEntity.ok(updated);
     }
@@ -69,7 +56,7 @@ public class UserProfileController {
             Authentication authentication,
             @RequestBody @Valid CheckPasswordRequest body
     ) {
-        Long userId = getUserId(authentication);
+        Long userId = SecurityUtil.getUserId(authentication);
         boolean ok = userService.checkPassword(userId, body.currentPassword());
         if (!ok) {
             return ResponseEntity.badRequest()
@@ -92,7 +79,7 @@ public class UserProfileController {
             Authentication authentication,
             @RequestBody @Valid ChangePasswordRequest body
     ) {
-        Long userId = getUserId(authentication);
+        Long userId = SecurityUtil.getUserId(authentication);
         userService.changePassword(userId, body.currentPassword(), body.newPassword());
         return ResponseEntity.ok(
                 new EmailVerificationResponse("비밀번호가 변경되었습니다.")
