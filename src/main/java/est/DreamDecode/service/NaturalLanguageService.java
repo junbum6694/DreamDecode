@@ -12,6 +12,7 @@ import jakarta.annotation.PreDestroy;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import javax.swing.*;
 import java.io.FileInputStream;
 import java.io.IOException;
 
@@ -28,6 +29,8 @@ public class NaturalLanguageService {
    * Spring Bean 초기화 시 LanguageServiceClient를 생성합니다.
    * LanguageServiceClient는 리소스를 사용하므로, 한 번만 생성하여 재사용하는 것이 좋습니다.
    */
+
+
   @PostConstruct
   public void init() throws IOException {
     // 1. 서비스 계정 JSON 파일로 인증 정보(Credentials) 로드
@@ -41,9 +44,8 @@ public class NaturalLanguageService {
     languageServiceClient = LanguageServiceClient.create(settings);
   }
 
-  /**
-   * Spring Bean 소멸 시 LanguageServiceClient의 리소스를 해제합니다.
-   */
+  //Spring Bean 소멸 시 LanguageServiceClient의 리소스를 해제합니다.
+
   @PreDestroy
   public void close() {
     if (languageServiceClient != null) {

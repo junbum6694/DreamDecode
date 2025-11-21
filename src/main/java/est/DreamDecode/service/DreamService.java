@@ -81,7 +81,8 @@ public class DreamService {
     return DreamResponse.from(dream);
   }
 
-  public Dream saveDream(DreamRequest request) {
+  public Dream saveDream(Long userId, DreamRequest request) {
+    request.setUserId(userId);
     Dream dream = dreamRepository.save(request.toEntity());
 
     Long dreamId = dream.getId();
@@ -91,7 +92,7 @@ public class DreamService {
   }
 
   @Transactional
-  public DreamResponse updateDream(Long dreamId, DreamRequest request) {
+  public DreamResponse updateDream(Long userId, Long dreamId, DreamRequest request) {
     Dream dream = dreamRepository.findById(dreamId)
                           .orElseThrow(() -> new DreamNotFoundException(dreamId));
 
@@ -104,9 +105,7 @@ public class DreamService {
     if (request.getContent() != null) {
       dream.setContent(request.getContent());
     }
-    if (request.getUserId() != null) {
-      dream.setUserId(request.getUserId());
-    }
+    dream.setUserId(userId);
     dream.setPublished(request.isPublished());
 
     if(contentUpdated) {
@@ -116,7 +115,7 @@ public class DreamService {
     return DreamResponse.from(dream);
   }
 
-  public void deleteDream(Long dreamId) {
+  public void deleteDream(Long userId, Long dreamId) {
     dreamRepository.deleteById(dreamId);
   }
 
@@ -129,8 +128,9 @@ public class DreamService {
   }
 
   // 현재 로그인한 사용자의 꿈 목록을 가져옵니다 (최신순, limit 만큼)
-  public List<DreamResponse> getMyDreams(Long userId, int limit) {
-    Pageable pageable = PageRequest.of(0, Math.max(limit, 1));
+  public List<DreamResponse> getMyDreams(Long userId, Integer limit) {
+    int resolvedLimit = (limit == null || limit <= 0) ? 4 : limit;
+    Pageable pageable = PageRequest.of(0, resolvedLimit);
     Page<Dream> dreamPage = dreamRepository.findByUserIdOrderByCreatedAtDesc(userId, pageable);
     return dreamPage.getContent()
                     .stream()

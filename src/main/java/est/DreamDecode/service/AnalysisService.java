@@ -1,9 +1,15 @@
 package est.DreamDecode.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import est.DreamDecode.domain.Analysis;
 import est.DreamDecode.domain.Dream;
 import est.DreamDecode.domain.Scene;
+import est.DreamDecode.dto.AlanApiResponse;
+import est.DreamDecode.dto.AlanResetRequest;
 import est.DreamDecode.dto.AnalysisResponse;
+import est.DreamDecode.dto.DreamAnalysisResponse;
+import est.DreamDecode.dto.SceneAnalysis;
 import est.DreamDecode.dto.SentimentResult;
 import est.DreamDecode.exception.DreamAnalysisException;
 import est.DreamDecode.exception.DreamNotFoundException;
@@ -12,17 +18,12 @@ import est.DreamDecode.repository.DreamRepository;
 import est.DreamDecode.repository.SceneRepository;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
-import java.util.stream.IntStream;
 
 @Service
 @RequiredArgsConstructor
@@ -31,6 +32,7 @@ public class AnalysisService {
     private final DreamRepository dreamRepository;
     private final SceneRepository sceneRepository;
     private final NaturalLanguageService naturalLanguageService;
+    private final ObjectMapper objectMapper;
 
     @Transactional
     public AnalysisResponse addOrUpdateAnalysis(Long dreamId, boolean isPost){
@@ -42,52 +44,32 @@ public class AnalysisService {
         }
 
         String dreamContent = dream.getContent();
-        JSONObject dreamAnalysis = dreamAnalyzeByPython(dreamContent);
-        if(dreamAnalysis == null){
+        DreamAnalysisResponse dreamAnalysis = dreamAnalyzeByPython(dreamContent);
+        if(dreamAnalysis == null || dreamAnalysis.getAnalysis() == null){
             throw new DreamAnalysisException("Failed to analyze dream content from external service for dream id " + dreamId);
         }
 
-        String insight;
-        String suggestion;
-        String categories;
-        String tags;
-        String summary;
-        List<Scene> scenesToPersist = new ArrayList<>();
-        try {
-            JSONArray scenesArray = dreamAnalysis.getJSONArray("analysis");
-            for (int i = 0; i < scenesArray.length(); i++) {
-                JSONObject sceneJson = scenesArray.getJSONObject(i);
-                String content = sceneJson.getString("scene");
-                String emotion = sceneJson.getString("emotion");
-                String interpretation = sceneJson.getString("interpretation");
-                Scene scene = new Scene();
-                scene.setContent(content);
-                scene.setEmotion(emotion);
-                scene.setInterpretation(interpretation);
-                scene.setDream(dream);
-                scenesToPersist.add(scene);
-            }
-            if (!scenesToPersist.isEmpty()) {
-                sceneRepository.saveAll(scenesToPersist);
-            }
-            insight = dreamAnalysis.getString("insight");
-            suggestion = dreamAnalysis.getString("suggestion");
+        // Stream API를 사용하여 Scene 리스트 생성
+        List<Scene> scenesToPersist = dreamAnalysis.getAnalysis().stream()
+                .map(sceneAnalysis -> {
+                    Scene scene = new Scene();
+                    scene.setContent(sceneAnalysis.getScene());
+                    scene.setEmotion(sceneAnalysis.getEmotion());
+                    scene.setInterpretation(sceneAnalysis.getInterpretation());
+                    scene.setDream(dream);
+                    return scene;
+                })
+                .collect(Collectors.toList());
 
-            // JSON 배열을 쉼표로 구분된 문자열로 변환 (괄호 제거)
-            JSONArray categoriesArray = dreamAnalysis.getJSONArray("categories");
-            categories = IntStream.range(0, categoriesArray.length())
-                    .mapToObj(categoriesArray::getString)
-                    .collect(Collectors.joining(","));
-
-            JSONArray tagsArray = dreamAnalysis.getJSONArray("tags");
-            tags = IntStream.range(0, tagsArray.length())
-                    .mapToObj(tagsArray::getString)
-                    .collect(Collectors.joining(","));
-
-            summary = dreamAnalysis.getString("summary");
-        } catch (JSONException e) {
-            throw new DreamAnalysisException("Invalid analysis response for dream id " + dreamId, e);
+        if (!scenesToPersist.isEmpty()) {
+            sceneRepository.saveAll(scenesToPersist);
         }
+
+        String insight = dreamAnalysis.getInsight();
+        String suggestion = dreamAnalysis.getSuggestion();
+        String categories = String.join(",", dreamAnalysis.getCategories());
+        String tags = String.join(",", dreamAnalysis.getTags());
+        String summary = dreamAnalysis.getSummary();
 
         // GCP Natural Language API를 사용하여 꿈 내용의 실제 감정 분석 수행
         SentimentResult sentimentResult;
@@ -98,22 +80,6 @@ public class AnalysisService {
         }
         double sentiment = sentimentResult.getScore();
         double magnitude = sentimentResult.getMagnitude();
-
-        /* categories, tags List<String>으로 변환 후
-        try{
-            ObjectMapper mapper = new ObjectMapper();
-            List<String> categoriesToList = mapper.readValue(categories, new TypeReference<List<String>>() {});
-            List<String> tagsToList = mapper.readValue(tags, new TypeReference<List<String>>() {});
-            for(String c : categoriesToList){
-                System.out.println(c);
-            }
-            for(String t : tagsToList){
-                System.out.println(t);
-            }
-        } catch(JsonProcessingException e) {
-
-        }
-        */
 
         if(isPost) {
             Analysis analysis = new Analysis();
@@ -147,7 +113,7 @@ public class AnalysisService {
     }
 
     // 프롬프트
-    public JSONObject dreamAnalyzeByPython(String dreamContent){
+    public DreamAnalysisResponse dreamAnalyzeByPython(String dreamContent){
         String clientId = "515d3756-783e-484d-a04b-b7121c99fbb7";
 
         String prompt = """
@@ -195,12 +161,12 @@ public class AnalysisService {
                 """
                 + dreamContent;
 
-        JSONObject result = singleAlanChat(clientId, prompt);
+        DreamAnalysisResponse result = singleAlanChat(clientId, prompt);
         resetAlanState(clientId);
         return result;
     }
 
-    private JSONObject singleAlanChat(String clientId, String prompt){
+    private DreamAnalysisResponse singleAlanChat(String clientId, String prompt){
         String url = "https://kdt-api-function.azurewebsites.net/api/v1/question";
         RestTemplate restTemplate = new RestTemplate();
 
@@ -219,16 +185,18 @@ public class AnalysisService {
         );
 
         try{
-            JSONObject jsonResponse = new JSONObject(response.getBody());
-            String content = jsonResponse.getString("content");
+            AlanApiResponse apiResponse = objectMapper.readValue(response.getBody(), AlanApiResponse.class);
+            String content = apiResponse.getContent();
+            if (content == null) {
+                throw new DreamAnalysisException("API response content is null");
+            }
             content = content.replaceAll("(?s)```json\\s*", "")
                     .replaceAll("(?s)```\\s*", "")
                     .trim();
-            return new JSONObject(content);
-        } catch(JSONException e){
-            return null;
+            return objectMapper.readValue(content, DreamAnalysisResponse.class);
+        } catch(JsonProcessingException e){
+            throw new DreamAnalysisException("Failed to parse API response", e);
         }
-
     }
 
     private void resetAlanState(String clientId){
@@ -238,14 +206,13 @@ public class AnalysisService {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
 
-        JSONObject params = new JSONObject();
-        try{
-            params.put("client_id", clientId);
-        } catch(JSONException e){
-
+        try {
+            AlanResetRequest request = new AlanResetRequest(clientId);
+            String requestBody = objectMapper.writeValueAsString(request);
+            HttpEntity<String> entity = new HttpEntity<>(requestBody, headers);
+            restTemplate.exchange(url, HttpMethod.DELETE, entity, String.class);
+        } catch(JsonProcessingException e){
+            throw new DreamAnalysisException("Failed to create reset request", e);
         }
-        HttpEntity<String> entity = new HttpEntity<>(params.toString(), headers);
-
-        restTemplate.exchange(url, HttpMethod.DELETE, entity, String.class);
     }
 }
